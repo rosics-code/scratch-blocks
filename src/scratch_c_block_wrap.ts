@@ -78,27 +78,42 @@ Reflect.set(
     const markerPreviousConnection = marker.previousConnection
     const markerNextConnection = marker.nextConnection
 
-    // Restore a real block from a statement input to nextConnection so that
-    // unplug(true) can heal the stack correctly.  Conditions:
-    //   - marker is mid-stack (has a predecessor)
-    //   - marker.nextConnection is empty (displaced block is NOT already there)
-    //   - a non-marker block is sitting in a statement input
-    if (markerPreviousConnection?.isConnected() && markerNextConnection && !markerNextConnection.isConnected()) {
-      for (const input of marker.inputList) {
-        const conn = input.connection
-        const connType = conn?.type as Blockly.ConnectionType | undefined
-        if (connType !== Blockly.ConnectionType.NEXT_STATEMENT || !conn?.isConnected()) {
-          continue
-        }
-        const blockInInput = conn.targetBlock()
-        if (blockInInput && !blockInInput.isInsertionMarker()) {
-          const prev = blockInInput.previousConnection
-          if (!prev) {
+    // Restore a real block from a statement input so the stack heals correctly
+    // when the marker is disposed. For C-blocks with a next connection (e.g.
+    // repeat), we move the displaced block to marker.nextConnection so
+    // unplug(true) can reconnect predecessor → displaced. For C-blocks without
+    // a next connection (e.g. forever), we disconnect the marker from the stack
+    // and reconnect predecessor → displaced directly.
+    if (markerPreviousConnection?.isConnected()) {
+      const displacedBlock = (() => {
+        for (const input of marker.inputList) {
+          const conn = input.connection
+          const connType = conn?.type as Blockly.ConnectionType | undefined
+          if (connType !== Blockly.ConnectionType.NEXT_STATEMENT || !conn?.isConnected()) {
             continue
           }
+          const blockInInput = conn.targetBlock()
+          if (blockInInput && !blockInInput.isInsertionMarker() && blockInInput.previousConnection) {
+            return blockInInput
+          }
+        }
+        return null
+      })()
+
+      if (displacedBlock) {
+        const prev = displacedBlock.previousConnection
+        if (prev) {
           prev.disconnect()
-          markerNextConnection.connect(prev)
-          break
+          if (markerNextConnection && !markerNextConnection.isConnected()) {
+            // C-block with next connection: move to nextConnection so unplug(true) heals.
+            markerNextConnection.connect(prev)
+          } else if (!markerNextConnection) {
+            // C-block without next connection (e.g. forever): no nextConnection
+            // for unplug to use. Reconnect predecessor → displaced directly.
+            const predecessor = markerPreviousConnection.targetBlock()
+            markerPreviousConnection.disconnect()
+            predecessor?.nextConnection?.connect(prev)
+          }
         }
       }
     }

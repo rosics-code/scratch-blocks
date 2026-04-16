@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 describe('C-block wrapping', () => {
-  const BLOCK_TYPES = ['test_c_block_wrap', 'test_stmt_wrap_inner', 'test_stmt_wrap_outer']
+  const BLOCK_TYPES = ['test_c_block_wrap', 'test_cap_c_block_wrap', 'test_stmt_wrap_inner', 'test_stmt_wrap_outer']
 
   beforeEach(() => {
     Blockly.defineBlocksWithJsonArray([
@@ -28,6 +28,13 @@ describe('C-block wrapping', () => {
         args0: [{ type: 'input_statement', name: 'SUBSTACK' }],
         previousStatement: null,
         nextStatement: null,
+      },
+      {
+        type: 'test_cap_c_block_wrap',
+        message0: 'forever %1',
+        args0: [{ type: 'input_statement', name: 'SUBSTACK' }],
+        previousStatement: null,
+        // No nextStatement — "forever" is a C-block without a next connection.
       },
       {
         type: 'test_stmt_wrap_inner',
@@ -100,6 +107,36 @@ describe('C-block wrapping', () => {
     ;(Blockly.InsertionMarkerPreviewer.prototype as any).hideInsertionMarker.call({}, marker.previousConnection)
 
     // After cleanup, the stack should be healed: B1 → B2 (marker was disposed)
+    expect(b1.nextConnection.targetBlock()).toBe(b2)
+  })
+
+  it('hideInsertionMarker restores displaced block for C-blocks without a next connection (e.g. forever)', () => {
+    // A C-block like "forever" has a statement input but no nextConnection.
+    // The hideInsertionMarker patch must still move the displaced block (B2) out
+    // of the marker's statement input and reconnect B1 → B2 to heal the stack.
+    const b1 = workspace.newBlock('test_stmt_wrap_outer')
+    const marker = workspace.newBlock('test_cap_c_block_wrap')
+    const b2 = workspace.newBlock('test_stmt_wrap_inner')
+
+    marker.setInsertionMarker(true)
+
+    // Verify forever-like topology: previous but no next.
+    expect(marker.previousConnection).not.toBeNull()
+    expect(marker.nextConnection).toBeNull()
+
+    // B1 → marker (marker is mid-stack)
+    assert(b1.nextConnection, 'b1 should have nextConnection')
+    assert(marker.previousConnection, 'marker should have previousConnection')
+    b1.nextConnection.connect(marker.previousConnection)
+
+    // B2 is in the marker's statement input
+    const markerStatementConn = marker.getInput('SUBSTACK')?.connection
+    assert(markerStatementConn, 'marker should have a SUBSTACK statement input')
+    assert(b2.previousConnection, 'b2 should have previousConnection')
+    markerStatementConn.connect(b2.previousConnection)
+    ;(Blockly.InsertionMarkerPreviewer.prototype as any).hideInsertionMarker.call({}, marker.previousConnection)
+
+    // After cleanup, the stack should be healed: B1 → B2
     expect(b1.nextConnection.targetBlock()).toBe(b2)
   })
 
